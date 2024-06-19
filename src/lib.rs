@@ -130,8 +130,8 @@ fn bnb(
     options: &CoinSelectionOpt,
     rng: &mut ThreadRng
 ) -> option::Option<Vec<usize>> {
-    let target_for_match = options.target_value + (((options.base_weight as f32) * options.target_feerate).ceil() as u64) + options.cost_per_output ; // here we include the CostPerOutput  
-    let match_range = options.cost_per_input + options.cost_per_output; 
+    let target_for_match = options.target_value + calculate_fee(options.base_weight, options.target_feerate) + options.cost_per_output;
+    let match_range = options.cost_per_input + options.cost_per_output;
     if acc_eff_value > target_for_match + match_range {
         return None;
     } else if acc_eff_value >= target_for_match {
