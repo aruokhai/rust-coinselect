@@ -2,7 +2,7 @@
 
 //! A blockchain-agnostic Rust Coinselection library
 
-use rand::{seq::SliceRandom, thread_rng , Rng};
+use rand::{rngs::ThreadRng, seq::SliceRandom, Rng};
 use std::{option, vec};
 
 /// A [`OutputGroup`] represents an input candidate for Coinselection. This can either be a
@@ -98,38 +98,57 @@ pub fn select_coin_bnb(
     inputs: &[OutputGroup],
     options: CoinSelectionOpt,
 ) -> Result<SelectionOutput, SelectionError> {
-    let mut selected_inputs : Vec<usize> =  vec![] ; 
-    let bnb_tries = 1000000 ; 
-    let bnb_selected_coin = bnb(&desce_input(inputs),&mut selected_inputs , 0 , 0 , bnb_tries , &options);
+    let mut selected_inputs: Vec<usize> = vec![];
+    let bnb_tries = 1000000;
+    let bnb_selected_coin = bnb(
+        &desce_input(inputs),
+        &mut selected_inputs,
+        0,
+        0,
+        bnb_tries,
+        &options,
+    );
     if bnb_selected_coin.is_none() {
-       return  select_coin_srd(inputs, options) ;
-    }else {
+        return select_coin_srd(inputs, options, &mut rand::thread_rng());
+    } else {
         let selected_coin = bnb_selected_coin.unwrap();
-        let accumulated_value :u64= selected_coin.iter().fold(0, |acc, &i| acc + inputs[i].value);
-        let accumulated_weight : u32  = selected_coin.iter().fold(0, |acc, &i| acc + inputs[i].weight);
-        let estimated_fee = 0 ;
-        let waste = calculate_waste(inputs,&selected_inputs,&options,accumulated_value,accumulated_weight,estimated_fee,);
-        let selection_output =  SelectionOutput {
-             selected_inputs: selected_coin ,
-             waste : WasteMetric(waste) 
-        } ;
+        let accumulated_value: u64 = selected_coin
+            .iter()
+            .fold(0, |acc, &i| acc + inputs[i].value);
+        let accumulated_weight: u32 = selected_coin
+            .iter()
+            .fold(0, |acc, &i| acc + inputs[i].weight);
+        let estimated_fee = 0;
+        let waste = calculate_waste(
+            inputs,
+            &selected_inputs,
+            &options,
+            accumulated_value,
+            accumulated_weight,
+            estimated_fee,
+        );
+        let selection_output = SelectionOutput {
+            selected_inputs: selected_coin,
+            waste: WasteMetric(waste),
+        };
         return Ok(selection_output);
     }
-   
 }
 
 /// Return empty vec if no solutions are found
-// changing the selected_inputs : &[usize] -> &mut Vec<usize> 
+// changing the selected_inputs : &[usize] -> &mut Vec<usize>
 fn bnb(
     inputs_in_desc_value: &[(usize, OutputGroup)],
     selected_inputs: &mut Vec<usize>,
-    acc_eff_value : u64,
+    acc_eff_value: u64,
     depth: usize,
     bnp_tries: u32,
-    options: &CoinSelectionOpt
+    options: &CoinSelectionOpt,
 ) -> option::Option<Vec<usize>> {
-    let target_for_match = options.target_value + (((options.base_weight as f32) * options.target_feerate).ceil() as u64) + options.cost_per_output ; // here we include the CostPerOutput  
-    let match_range = options.cost_per_input + options.cost_per_output; 
+    let target_for_match = options.target_value
+        + (((options.base_weight as f32) * options.target_feerate).ceil() as u64)
+        + options.cost_per_output; // here we include the CostPerOutput
+    let match_range = options.cost_per_input + options.cost_per_output;
     if acc_eff_value > target_for_match + match_range {
         return None;
     } else if acc_eff_value >= target_for_match {
@@ -139,58 +158,73 @@ fn bnb(
     } else if depth >= inputs_in_desc_value.len() {
         return None;
     } else {
-        if generate_random_bool()==true 
-        {
-            // exploring the inclusion branch 
+        if generate_random_bool(&mut rand::thread_rng()) == true {
+            // exploring the inclusion branch
             // first include then omit
-            let new_effective_values = acc_eff_value + effective_value(&inputs_in_desc_value[depth].1 , options.target_feerate );
-            selected_inputs.push(inputs_in_desc_value[depth].0); 
-            let with_this = bnb(inputs_in_desc_value , selected_inputs , 
-                new_effective_values , depth+1, bnp_tries-1, options) ;
-                if with_this.is_some() 
-                {
-                    return with_this;
-                }else 
-                {
-                    selected_inputs.pop();  //poping out the selected utxo if it does not fit 
-                    let without_this = bnb(inputs_in_desc_value , selected_inputs , acc_eff_value , depth+1, bnp_tries-1, options) ;
-                    if without_this.is_some() 
-                    {
-                        return without_this;
-                    } else {
-                        return None ; // this may or may not be correct 
-                    }
+            let new_effective_values = acc_eff_value
+                + effective_value(&inputs_in_desc_value[depth].1, options.target_feerate);
+            selected_inputs.push(inputs_in_desc_value[depth].0);
+            let with_this = bnb(
+                inputs_in_desc_value,
+                selected_inputs,
+                new_effective_values,
+                depth + 1,
+                bnp_tries - 1,
+                options,
+            );
+            if with_this.is_some() {
+                return with_this;
+            } else {
+                selected_inputs.pop(); //poping out the selected utxo if it does not fit
+                let without_this = bnb(
+                    inputs_in_desc_value,
+                    selected_inputs,
+                    acc_eff_value,
+                    depth + 1,
+                    bnp_tries - 1,
+                    options,
+                );
+                if without_this.is_some() {
+                    return without_this;
+                } else {
+                    return None; // this may or may not be correct
                 }
-        } else
-         {
+            }
+        } else {
             //exploring the omitting branch
-            //first omit then include 
-            let without_this = bnb(inputs_in_desc_value , selected_inputs , acc_eff_value , depth+1, bnp_tries-1, options) ;
+            //first omit then include
+            let without_this = bnb(
+                inputs_in_desc_value,
+                selected_inputs,
+                acc_eff_value,
+                depth + 1,
+                bnp_tries - 1,
+                options,
+            );
             if without_this.is_some() {
                 return without_this;
-            } 
-            else
-             {
-                let new_effective_values = acc_eff_value + effective_value(&inputs_in_desc_value[depth].1 , options.target_feerate );
+            } else {
+                let new_effective_values = acc_eff_value
+                    + effective_value(&inputs_in_desc_value[depth].1, options.target_feerate);
                 selected_inputs.push(inputs_in_desc_value[depth].0);
-                let with_this = bnb(inputs_in_desc_value , selected_inputs , 
-                    new_effective_values , depth+1, bnp_tries-1, options) ;
-                    if with_this.is_some() 
-                    {
-                        return with_this;
-                    }
-                    else 
-                    {
-                        selected_inputs.pop(); // poping out the selected utxo if it does not fit 
-                        return None ; // this may or may not be correct}
-                    }
-
-              }
-        }    
+                let with_this = bnb(
+                    inputs_in_desc_value,
+                    selected_inputs,
+                    new_effective_values,
+                    depth + 1,
+                    bnp_tries - 1,
+                    options,
+                );
+                if with_this.is_some() {
+                    return with_this;
+                } else {
+                    selected_inputs.pop(); // poping out the selected utxo if it does not fit
+                    return None; // this may or may not be correct}
+                }
+            }
+        }
     }
- }
-
-
+}
 
 /// Perform Coinselection via Knapsack solver.
 pub fn select_coin_knapsack(
@@ -328,17 +362,15 @@ pub fn select_coin_fifo(
 pub fn select_coin_srd(
     inputs: &[OutputGroup],
     options: CoinSelectionOpt,
+    rng: &mut ThreadRng,
 ) -> Result<SelectionOutput, SelectionError> {
     // Randomize the inputs order to simulate the random draw
-    let mut rng = thread_rng();
-
     // In out put we need to specify the indexes of the inputs in the given order
     // So keep track of the indexes when randomiz ing the vec
     let mut randomized_inputs: Vec<_> = inputs.iter().enumerate().collect();
 
     // Randomize the inputs order to simulate the random draw
-    let mut rng = thread_rng();
-    randomized_inputs.shuffle(&mut rng);
+    randomized_inputs.shuffle(rng);
 
     let mut accumulated_value = 0;
     let mut selected_inputs = Vec::new();
@@ -438,10 +470,7 @@ fn effective_value(output: &OutputGroup, feerate: f32) -> u64 {
         .saturating_sub(calculate_fee(output.weight, feerate))
 }
 
-fn generate_random_bool() -> bool {
-    // Create a random number generator
-    let mut rng = rand::thread_rng();
-    
+fn generate_random_bool(rng: &mut ThreadRng) -> bool {
     // Generate a random boolean value
     rng.gen()
 }
@@ -619,46 +648,46 @@ mod test {
     fn test_bnb() {
         // Perform BNB selection of set of test values.
         let values = [
-        OutputGroup {
-            value: 10000000,
-            weight: 100,
-            input_count: 1,
-            is_segwit: false,
-            creation_sequence: Some(1),
-        },
-        OutputGroup {
-            value: 5000000,
-            weight: 200,
-            input_count: 1,
-            is_segwit: false,
-            creation_sequence: Some(5000),
-        },
-        OutputGroup {
-            value: 9000000,
-            weight: 300,
-            input_count: 1,
-            is_segwit: false,
-            creation_sequence: Some(1001),
-        },
-        OutputGroup {
-            value: 270,
-            weight: 10,
-            input_count: 1,
-            is_segwit: false,
-            creation_sequence: Some(1000),
-        }
-    ];
-    let opt = setup_options(14000000); 
-    let ans = select_coin_bnb(&values, opt);
-    assert!(ans.is_ok());
-    assert!(!ans.unwrap().selected_inputs.contains(&0));  
-    // as 10000000 should not be included in the selection
+            OutputGroup {
+                value: 10000000,
+                weight: 100,
+                input_count: 1,
+                is_segwit: false,
+                creation_sequence: Some(1),
+            },
+            OutputGroup {
+                value: 5000000,
+                weight: 200,
+                input_count: 1,
+                is_segwit: false,
+                creation_sequence: Some(5000),
+            },
+            OutputGroup {
+                value: 9000000,
+                weight: 300,
+                input_count: 1,
+                is_segwit: false,
+                creation_sequence: Some(1001),
+            },
+            OutputGroup {
+                value: 270,
+                weight: 10,
+                input_count: 1,
+                is_segwit: false,
+                creation_sequence: Some(1000),
+            },
+        ];
+        let opt = setup_options(14000000);
+        let ans = select_coin_bnb(&values, opt);
+        assert!(ans.is_ok());
+        assert!(!ans.unwrap().selected_inputs.contains(&0));
+        // as 10000000 should not be included in the selection
     }
 
     fn test_successful_selection() {
         let mut inputs = setup_basic_output_groups();
         let mut options = setup_options(2500);
-        let mut result = select_coin_srd(&inputs, options);
+        let mut result = select_coin_srd(&inputs, options, &mut rand::thread_rng());
         assert!(result.is_ok());
         let mut selection_output = result.unwrap();
         assert!(!selection_output.selected_inputs.is_empty());
@@ -674,7 +703,7 @@ mod test {
     fn test_insufficient_funds() {
         let inputs = setup_basic_output_groups();
         let options = setup_options(7000); // Set a target value higher than the sum of all inputs
-        let result = select_coin_srd(&inputs, options);
+        let result = select_coin_srd(&inputs, options, &mut rand::thread_rng());
         assert!(matches!(result, Err(SelectionError::InsufficientFunds)));
     }
     #[test]
