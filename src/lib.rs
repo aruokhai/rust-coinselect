@@ -101,7 +101,15 @@ pub fn select_coin_bnb(
 ) -> Result<SelectionOutput, SelectionError> {
     let mut selected_inputs : Vec<usize> =  vec![] ; 
     let bnb_tries = 1000000 ; 
-    let bnb_selected_coin = bnb(&desce_input(inputs),&mut selected_inputs , 0 , 0 , bnb_tries , &options, rng);
+
+    let mut sorted_inputs: Vec<(usize, OutputGroup)> = inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| (index, input.clone()))
+        .collect();
+    sorted_inputs.sort_by_key(|(_, input)| std::cmp::Reverse(input.value));
+
+    let bnb_selected_coin = bnb(&sorted_inputs, &mut selected_inputs , 0 , 0 , bnb_tries , &options, rng);
     match bnb_selected_coin {
         Some(selected_coin) => {
             let accumulated_value :u64= selected_coin.iter().fold(0, |acc, &i| acc + inputs[i].value);
@@ -423,16 +431,7 @@ fn generate_random_bool(rng: &mut ThreadRng) -> bool {
     // Generate a random boolean value
     rng.gen()
 }
-pub fn desce_input<'a>(inputs: &'a [OutputGroup]) -> Vec<(usize, OutputGroup)> {
-    let mut sorted_inputs: Vec<(usize, OutputGroup)> = inputs
-        .iter()
-        .enumerate()
-        .map(|(index, input)| (index, input.clone()))
-        .collect();
 
-    sorted_inputs.sort_by_key(|(_, input)| std::cmp::Reverse(input.value));
-    sorted_inputs
-}
 
 #[cfg(test)]
 mod test {
