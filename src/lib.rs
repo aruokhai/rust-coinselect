@@ -102,21 +102,20 @@ pub fn select_coin_bnb(
     let mut selected_inputs : Vec<usize> =  vec![] ; 
     let bnb_tries = 1000000 ; 
     let bnb_selected_coin = bnb(&desce_input(inputs),&mut selected_inputs , 0 , 0 , bnb_tries , &options, rng);
-    if bnb_selected_coin.is_none() {
-       return  select_coin_srd(inputs, options, &mut rand::thread_rng()) ;
-    }else {
-        let selected_coin = bnb_selected_coin.unwrap();
-        let accumulated_value :u64= selected_coin.iter().fold(0, |acc, &i| acc + inputs[i].value);
-        let accumulated_weight : u32  = selected_coin.iter().fold(0, |acc, &i| acc + inputs[i].weight);
-        let estimated_fee = 0 ;
-        let waste = calculate_waste(inputs,&selected_inputs,&options,accumulated_value,accumulated_weight,estimated_fee,);
-        let selection_output =  SelectionOutput {
-             selected_inputs: selected_coin ,
-             waste : WasteMetric(waste) 
-        } ;
-        return Ok(selection_output);
+    match bnb_selected_coin {
+        Some(selected_coin) => {
+            let accumulated_value :u64= selected_coin.iter().fold(0, |acc, &i| acc + inputs[i].value);
+            let accumulated_weight : u32  = selected_coin.iter().fold(0, |acc, &i| acc + inputs[i].weight);
+            let estimated_fee = 0 ;
+            let waste = calculate_waste(inputs,&selected_inputs,&options,accumulated_value,accumulated_weight,estimated_fee,);
+            let selection_output =  SelectionOutput {
+                selected_inputs: selected_coin ,
+                waste : WasteMetric(waste) 
+            } ;
+            Ok(selection_output)
+        },
+        None => select_coin_srd(inputs, options, &mut rand::thread_rng())
     }
-   
 }
 
 /// Return empty vec if no solutions are found
@@ -129,70 +128,53 @@ fn bnb(
     bnp_tries: u32,
     options: &CoinSelectionOpt,
     rng: &mut ThreadRng
-) -> option::Option<Vec<usize>> {
+) -> Option<Vec<usize>> {
     let target_for_match = options.target_value + calculate_fee(options.base_weight, options.target_feerate) + options.cost_per_output;
     let match_range = options.cost_per_input + options.cost_per_output;
     if acc_eff_value > target_for_match + match_range {
         return None;
     } else if acc_eff_value >= target_for_match {
         return Some(selected_inputs.to_vec());
-    } else if bnp_tries <= 0 {
-        return None;
-    } else if depth >= inputs_in_desc_value.len() {
+    } else if bnp_tries <= 0 || depth >= inputs_in_desc_value.len() {
         return None;
     } else {
-        if rng.gen_bool(0.5)
-        {
+        if rng.gen_bool(0.5) {
             // exploring the inclusion branch 
             // first include then omit
             let new_effective_values = acc_eff_value + effective_value(&inputs_in_desc_value[depth].1 , options.target_feerate );
             selected_inputs.push(inputs_in_desc_value[depth].0); 
-            let with_this = bnb(inputs_in_desc_value , selected_inputs , 
-                new_effective_values , depth+1, bnp_tries-1, options, rng) ;
-                if with_this.is_some() 
-                {
-                    return with_this;
-                }else 
-                {
-                    selected_inputs.pop();  //poping out the selected utxo if it does not fit 
-                    let without_this = bnb(inputs_in_desc_value , selected_inputs , acc_eff_value , depth+1, bnp_tries-1, options, rng) ;
-                    if without_this.is_some() 
-                    {
-                        return without_this;
-                    } else {
-                        return None ; // this may or may not be correct 
+            let with_this = bnb(inputs_in_desc_value , selected_inputs , new_effective_values , depth+1, bnp_tries-1, options, rng);
+            match with_this {
+                Some(_) => return with_this,
+                None => {
+                    selected_inputs.pop(); //poping out the selected utxo if it does not fit 
+                    let without_this = bnb(inputs_in_desc_value, selected_inputs, acc_eff_value, depth+1, bnp_tries-1, options, rng);
+                    match without_this {
+                        Some(_) => return without_this,
+                        None => return None, // this may or may not be correct 
                     }
                 }
-        } else
-         {
-            //exploring the omitting branch
-            //first omit then include 
-            let without_this = bnb(inputs_in_desc_value , selected_inputs , acc_eff_value , depth+1, bnp_tries-1, options, rng) ;
-            if without_this.is_some() {
-                return without_this;
-            } 
-            else
-             {
-                let new_effective_values = acc_eff_value + effective_value(&inputs_in_desc_value[depth].1 , options.target_feerate );
-                selected_inputs.push(inputs_in_desc_value[depth].0);
-                let with_this = bnb(inputs_in_desc_value , selected_inputs , 
-                    new_effective_values , depth+1, bnp_tries-1, options, rng) ;
-                    if with_this.is_some() 
-                    {
-                        return with_this;
+            }
+        } else {
+            let without_this = bnb(inputs_in_desc_value , selected_inputs , acc_eff_value , depth+1, bnp_tries-1, options, rng);
+            match without_this {
+                Some(_) => return without_this,
+                None => {
+                    let new_effective_values = acc_eff_value + effective_value(&inputs_in_desc_value[depth].1 , options.target_feerate );
+                    selected_inputs.push(inputs_in_desc_value[depth].0);
+                    let with_this = bnb(inputs_in_desc_value , selected_inputs , new_effective_values , depth+1, bnp_tries-1, options, rng);
+                    match with_this {
+                        Some(_) => return with_this,
+                        None => {
+                            selected_inputs.pop(); // poping out the selected utxo if it does not fit 
+                            return None ; // this may or may not be correct
+                        }
                     }
-                    else 
-                    {
-                        selected_inputs.pop(); // poping out the selected utxo if it does not fit 
-                        return None ; // this may or may not be correct}
-                    }
-
-              }
+                }
+            }
         }    
     }
- }
-
-
+}
 
 /// Perform Coinselection via Knapsack solver.
 pub fn select_coin_knapsack(
